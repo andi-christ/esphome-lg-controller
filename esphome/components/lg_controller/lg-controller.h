@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cmath>
 #include "esphome.h"
 #include "esphome/components/uart/uart.h"
 
@@ -801,10 +802,15 @@ private:
             target = MAX_TEMP_SETPOINT;
         }
 
+        constexpr float kHalfEps = 0.01f;
+        float t = target;
+        // Snap to 0.5 steps to avoid float equality issues.
+        t = roundf(t * 2.0f) / 2.0f;
+
         // Byte 5. Unchanged except for the low bit which indicates the target temperature has a
         // 0.5 fractional part.
         send_buf_[5] = last_recv_status_[5] & ~0x1;
-        if (target - uint8_t(target) == 0.5) {
+        if (fabsf(t - floorf(t) - 0.5f) < kHalfEps) {
             send_buf_[5] |= 0x1;
         }
 
@@ -822,7 +828,7 @@ private:
             thermistor = ThermistorSetting::Unit;
             temp = 20;
         }
-        send_buf_[6] = (thermistor << 4) | ((uint8_t(target) - 15) & 0xf);
+        send_buf_[6] = (thermistor << 4) | ((uint8_t(floorf(t)) - 15) & 0xf);
         send_buf_[7] = (last_recv_status_[7] & 0xC0) | uint8_t((temp - 10) * 2);
 
         // Bytes 8-10. Initialize bytes 8-9 to 0 to not echo back timer settings set by the AC.
