@@ -533,8 +533,9 @@ public:
         pending_status_change_ = true;
 
         // Call `update` every 6 seconds, but first wait 10 seconds.
+        // andi-christ - changed the interval to 10 seconds to reduce logging verbosity.
         set_timeout("initial_send", 10000, [this]() {
-            set_interval("update", 6000, [this]() { update(); });
+            set_interval("update", 10000, [this]() { update(); });
         });
     }
 
