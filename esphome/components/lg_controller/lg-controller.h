@@ -1011,7 +1011,8 @@ private:
         last_sent_recv_type_b_millis_ = millis();
     }
 
-    // Judoka emulation: 0 off, 1 type B request, 2 type 4, 3 type 6, 4 all three.
+    // Judoka emulation: 0 off, 1 type B request, 2 type 4, 3 type 6 (zero-filled, as the
+    // Judoka sends it), 4 all three, 5 type 6 with the room temperature filled in.
     size_t judoka_emulation_mode() const {
         if (judoka_emulation_ == nullptr) {
             return 0;
@@ -1046,12 +1047,30 @@ private:
         last_emul_type4_millis_ = millis();
     }
 
-    // Type 6 frame as the Judoka sends it as master: AE 80 26 00 ... (byte 2 is humidity).
-    void send_emulated_type6_message() {
+    // Type 6 frame as the Judoka sends it as master: AE 80 26 00 ... (byte 2 is humidity, the
+    // rest zero). With `filled`, the fields a PREMTB100 populates per protocol.md are set too:
+    // byte 8 bit 2, and the room temperature to 0.1 degrees in bytes 10 (integer) and 11
+    // (tenths).
+    void send_emulated_type6_message(bool filled) {
         memset(send_buf_, 0, MsgLen);
         send_buf_[0] = slave_ ? 0x2E : 0xAE;
         send_buf_[1] = 0x80;
         send_buf_[2] = 0x26;
+        if (filled) {
+            float room = 20;
+            if (auto maybe_temp = get_room_temp()) {
+                room = *maybe_temp;
+            }
+            uint8_t whole = uint8_t(floorf(room));
+            uint8_t tenths = uint8_t(roundf((room - whole) * 10.0f));
+            if (tenths >= 10) {
+                whole += 1;
+                tenths = 0;
+            }
+            send_buf_[8] = 0x04;
+            send_buf_[10] = whole;
+            send_buf_[11] = tenths;
+        }
         send_buf_[12] = calc_checksum(send_buf_);
         ESP_LOGD(TAG, "sending emulated type 6 %s", format_hex_pretty(send_buf_, MsgLen).c_str());
         UARTDevice::write_array(send_buf_, MsgLen);
@@ -1619,9 +1638,9 @@ private:
                 }
                 return;
             }
-            if ((emul == 3 || emul == 4) && millis_now - last_emul_type6_millis_ > 30 * 1000) {
+            if ((emul == 3 || emul == 4 || emul == 5) && millis_now - last_emul_type6_millis_ > 30 * 1000) {
                 if (check_can_send()) {
-                    send_emulated_type6_message();
+                    send_emulated_type6_message(/* filled = */ emul == 5);
                 }
                 return;
             }

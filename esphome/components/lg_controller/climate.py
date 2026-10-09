@@ -66,6 +66,7 @@ JUDOKA_EMULATION_OPTIONS = [
     "Type 4 every 30 s",
     "Type 6 every 30 s",
     "All three",
+    "Type 6 with room temp every 30 s",
 ]
 
 CONFIG_SCHEMA = climate.climate_schema(LgController).extend(
