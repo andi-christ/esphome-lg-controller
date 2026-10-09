@@ -861,11 +861,16 @@ private:
             send_buf_[5] |= 0x1;
         }
         // Bit 2 (0x04) is the unit's "outdoor unit active" flag. LG wall controllers never send
-        // it; this controller copies it from the unit unless told not to.
+        // it; this controller copies it from the unit unless told not to. Sending it clear while
+        // the unit runs leaves this unit (B70AWYN9L6) unable to thermo-off until power cycled,
+        // so "Never send" is a deliberate way to break it. The PREMTA000 sends byte 5 as 0x40
+        // plus the half-degree bit and the unit thermostats; "Wall style" reproduces that.
         if (byte5_running_flag_ != nullptr) {
             auto idx = byte5_running_flag_->active_index();
             if (idx.has_value() && *idx == 1) {
                 send_buf_[5] &= ~0x04;
+            } else if (idx.has_value() && *idx == 2) {
+                send_buf_[5] = (send_buf_[5] & 0x01) | 0x40;
             }
         }
 

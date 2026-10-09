@@ -59,7 +59,7 @@ CONF_JUDOKA_EMULATION = "judoka_emulation"
 VANE_OPTIONS = ["0 (Default)", "1 (Up)", "2", "3", "4", "5", "6 (Down)"]
 OVERHEATING_OPTIONS = ["0 (Default)", "1 (+4C/+6C)", "2 (+2C/+4C)", "3 (-1C/+1C)", "4 (-0.5C/+0.5C)"]
 BYTE3_MODE_OPTIONS = ["Mirror unit", "Force 00 (clear bit 3)", "Force 08 (set bit 3)"]
-BYTE5_RUNNING_FLAG_OPTIONS = ["Mirror unit", "Never send"]
+BYTE5_RUNNING_FLAG_OPTIONS = ["Mirror unit", "Never send", "Wall style (40, never running flag)"]
 JUDOKA_EMULATION_OPTIONS = [
     "Off",
     "Type B request every 30 s",
