@@ -164,6 +164,10 @@ class LgController final : public climate::Climate, public uart::UARTDevice, pub
     LgSwitch& internal_thermistor_;
     LgSwitch& auto_dry_;
 
+    // Bus test controls, optional (may be null). See climate.py.
+    LgSelect* byte3_mode_;
+    LgSelect* byte5_running_flag_;
+
     uint8_t recv_buf_[MsgLen] = {};
     uint32_t recv_buf_len_ = 0;
     uint32_t last_recv_millis_ = 0;
@@ -429,6 +433,8 @@ public:
                  LgSwitch* purifier,
                  LgSwitch* internal_thermistor,
                  LgSwitch* auto_dry,
+                 LgSelect* byte3_mode,
+                 LgSelect* byte5_running_flag,
                  bool fahrenheit, bool is_slave_controller)
       : rx_pin_(*rx_pin),
         temperature_sensor_(temperature_sensor),
@@ -453,9 +459,22 @@ public:
         purifier_(*purifier),
         internal_thermistor_(*internal_thermistor),
         auto_dry_(*auto_dry),
+        byte3_mode_(byte3_mode),
+        byte5_running_flag_(byte5_running_flag),
         fahrenheit_(fahrenheit),
         slave_(is_slave_controller)
     {
+        if (byte3_mode_ != nullptr) {
+            byte3_mode_->add_on_state_callback([this](size_t) {
+                pending_status_change_ = true;
+            });
+        }
+        if (byte5_running_flag_ != nullptr) {
+            byte5_running_flag_->add_on_state_callback([this](size_t) {
+                pending_status_change_ = true;
+            });
+        }
+
         vane_select_1_.add_on_state_callback([this](size_t index) {
             set_vane_position(1, index);
         });
@@ -520,6 +539,14 @@ public:
         }
 
         internal_thermistor_.restore_and_set_mode(esphome::switch_::SWITCH_RESTORE_DEFAULT_OFF);
+
+        // Test controls default to mirroring the unit, i.e. the original behaviour.
+        if (byte3_mode_ != nullptr && !byte3_mode_->has_state()) {
+            byte3_mode_->publish_state(*byte3_mode_->at(0));
+        }
+        if (byte5_running_flag_ != nullptr && !byte5_running_flag_->has_state()) {
+            byte5_running_flag_->publish_state(*byte5_running_flag_->at(0));
+        }
 
         sleep_timer_.publish_state(0);
 
@@ -782,12 +809,23 @@ private:
         }
         send_buf_[2] = b;
 
-        // Byte 3.
+        // Byte 3. Copied from the unit's last status, with the reservation flag (0x10) ours.
+        // Bit 3 (0x08) is what the unit reports as "preheat"; a PREMTA000 as master has been seen
+        // sending it the other way round from the unit (set while the unit ran above setpoint,
+        // clear while it sat off below setpoint), so the test control can force it either way.
         send_buf_[3] = last_recv_status_[3];
         if (active_reservation_) {
             send_buf_[3] |= 0x10;
         } else {
             send_buf_[3] &= ~0x10;
+        }
+        if (byte3_mode_ != nullptr) {
+            auto idx = byte3_mode_->active_index();
+            if (idx.has_value() && *idx == 1) {
+                send_buf_[3] &= ~0x08;
+            } else if (idx.has_value() && *idx == 2) {
+                send_buf_[3] |= 0x08;
+            }
         }
 
         // Byte 4.
@@ -813,6 +851,14 @@ private:
         send_buf_[5] = last_recv_status_[5] & ~0x1;
         if (fabsf(t - floorf(t) - 0.5f) < kHalfEps) {
             send_buf_[5] |= 0x1;
+        }
+        // Bit 2 (0x04) is the unit's "outdoor unit active" flag. LG wall controllers never send
+        // it; this controller copies it from the unit unless told not to.
+        if (byte5_running_flag_ != nullptr) {
+            auto idx = byte5_running_flag_->active_index();
+            if (idx.has_value() && *idx == 1) {
+                send_buf_[5] &= ~0x04;
+            }
         }
 
         // Byte 6: thermistor setting and target temperature (fractional part in byte 5).

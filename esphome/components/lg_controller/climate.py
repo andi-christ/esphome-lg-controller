@@ -47,8 +47,16 @@ CONF_PURIFIER = "purifier"
 CONF_INTERNAL_THERMISTOR = "internal_thermistor"
 CONF_AUTO_DRY = "auto_dry"
 
+# Bus test controls (optional). They override what the controller puts in bytes 3 and 5 of
+# its status message, which are otherwise copied from the unit's last status. Used to work out
+# which bit the indoor unit's thermostat decision follows.
+CONF_BYTE3_MODE = "byte3_mode"
+CONF_BYTE5_RUNNING_FLAG = "byte5_running_flag"
+
 VANE_OPTIONS = ["0 (Default)", "1 (Up)", "2", "3", "4", "5", "6 (Down)"]
 OVERHEATING_OPTIONS = ["0 (Default)", "1 (+4C/+6C)", "2 (+2C/+4C)", "3 (-1C/+1C)", "4 (-0.5C/+0.5C)"]
+BYTE3_MODE_OPTIONS = ["Mirror unit", "Force 00 (clear bit 3)", "Force 08 (set bit 3)"]
+BYTE5_RUNNING_FLAG_OPTIONS = ["Mirror unit", "Never send"]
 
 CONFIG_SCHEMA = climate.climate_schema(LgController).extend(
     {
@@ -84,6 +92,9 @@ CONFIG_SCHEMA = climate.climate_schema(LgController).extend(
         cv.Required(CONF_PURIFIER): switch.switch_schema(LgSwitch),
         cv.Required(CONF_INTERNAL_THERMISTOR): switch.switch_schema(LgSwitch),
         cv.Required(CONF_AUTO_DRY): switch.switch_schema(LgSwitch),
+
+        cv.Optional(CONF_BYTE3_MODE): select.select_schema(LgSelect),
+        cv.Optional(CONF_BYTE5_RUNNING_FLAG): select.select_schema(LgSelect),
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(uart.UART_DEVICE_SCHEMA)
 
@@ -121,6 +132,15 @@ async def to_code(config):
     internal_thermistor = await switch.new_switch(config[CONF_INTERNAL_THERMISTOR])
     auto_dry = await switch.new_switch(config[CONF_AUTO_DRY])
 
+    if CONF_BYTE3_MODE in config:
+        byte3_mode = await select.new_select(config[CONF_BYTE3_MODE], options=BYTE3_MODE_OPTIONS)
+    else:
+        byte3_mode = cg.nullptr
+    if CONF_BYTE5_RUNNING_FLAG in config:
+        byte5_running_flag = await select.new_select(config[CONF_BYTE5_RUNNING_FLAG], options=BYTE5_RUNNING_FLAG_OPTIONS)
+    else:
+        byte5_running_flag = cg.nullptr
+
     var = cg.new_Pvariable(config[CONF_ID], rx_pin, temperature_sensor,
                            vane1, vane2, vane3, vane4, overheating,
                            fan_speed_slow, fan_speed_low, fan_speed_medium, fan_speed_high,
@@ -128,6 +148,7 @@ async def to_code(config):
                            error_code, pipe_temp_in, pipe_temp_mid, pipe_temp_out,
                            defrost, preheat, outdoor, auto_dry_active,
                            purifier, internal_thermistor, auto_dry,
+                           byte3_mode, byte5_running_flag,
                            config[CONF_FAHRENHEIT], config[CONF_IS_SLAVE_CONTROLLER])
     await climate.register_climate(var, config)
     await cg.register_component(var, config)
