@@ -90,6 +90,10 @@ climate:
       name: "Test: byte 5 running flag"
       id: byte5_running_flag
       icon: mdi:flask-outline
+    judoka_emulation:
+      name: "Test: Judoka emulation"
+      id: judoka_emulation
+      icon: mdi:flask-outline
     vane1:
       name: Airflow 1 Up-Down
       id: vane_position_1

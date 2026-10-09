@@ -52,11 +52,21 @@ CONF_AUTO_DRY = "auto_dry"
 # which bit the indoor unit's thermostat decision follows.
 CONF_BYTE3_MODE = "byte3_mode"
 CONF_BYTE5_RUNNING_FLAG = "byte5_running_flag"
+# Imitate the extra periodic traffic the Faikin Judoka sends (type B request, type 4 and type 6
+# frames every cycle) to find which of them stops the unit thermostating.
+CONF_JUDOKA_EMULATION = "judoka_emulation"
 
 VANE_OPTIONS = ["0 (Default)", "1 (Up)", "2", "3", "4", "5", "6 (Down)"]
 OVERHEATING_OPTIONS = ["0 (Default)", "1 (+4C/+6C)", "2 (+2C/+4C)", "3 (-1C/+1C)", "4 (-0.5C/+0.5C)"]
 BYTE3_MODE_OPTIONS = ["Mirror unit", "Force 00 (clear bit 3)", "Force 08 (set bit 3)"]
 BYTE5_RUNNING_FLAG_OPTIONS = ["Mirror unit", "Never send"]
+JUDOKA_EMULATION_OPTIONS = [
+    "Off",
+    "Type B request every 30 s",
+    "Type 4 every 30 s",
+    "Type 6 every 30 s",
+    "All three",
+]
 
 CONFIG_SCHEMA = climate.climate_schema(LgController).extend(
     {
@@ -95,6 +105,7 @@ CONFIG_SCHEMA = climate.climate_schema(LgController).extend(
 
         cv.Optional(CONF_BYTE3_MODE): select.select_schema(LgSelect),
         cv.Optional(CONF_BYTE5_RUNNING_FLAG): select.select_schema(LgSelect),
+        cv.Optional(CONF_JUDOKA_EMULATION): select.select_schema(LgSelect),
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(uart.UART_DEVICE_SCHEMA)
 
@@ -140,6 +151,10 @@ async def to_code(config):
         byte5_running_flag = await select.new_select(config[CONF_BYTE5_RUNNING_FLAG], options=BYTE5_RUNNING_FLAG_OPTIONS)
     else:
         byte5_running_flag = cg.nullptr
+    if CONF_JUDOKA_EMULATION in config:
+        judoka_emulation = await select.new_select(config[CONF_JUDOKA_EMULATION], options=JUDOKA_EMULATION_OPTIONS)
+    else:
+        judoka_emulation = cg.nullptr
 
     var = cg.new_Pvariable(config[CONF_ID], rx_pin, temperature_sensor,
                            vane1, vane2, vane3, vane4, overheating,
@@ -148,7 +163,7 @@ async def to_code(config):
                            error_code, pipe_temp_in, pipe_temp_mid, pipe_temp_out,
                            defrost, preheat, outdoor, auto_dry_active,
                            purifier, internal_thermistor, auto_dry,
-                           byte3_mode, byte5_running_flag,
+                           byte3_mode, byte5_running_flag, judoka_emulation,
                            config[CONF_FAHRENHEIT], config[CONF_IS_SLAVE_CONTROLLER])
     await climate.register_climate(var, config)
     await cg.register_component(var, config)

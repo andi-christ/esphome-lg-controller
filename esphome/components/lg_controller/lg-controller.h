@@ -167,6 +167,9 @@ class LgController final : public climate::Climate, public uart::UARTDevice, pub
     // Bus test controls, optional (may be null). See climate.py.
     LgSelect* byte3_mode_;
     LgSelect* byte5_running_flag_;
+    LgSelect* judoka_emulation_;
+    uint32_t last_emul_type4_millis_ = 0;
+    uint32_t last_emul_type6_millis_ = 0;
 
     uint8_t recv_buf_[MsgLen] = {};
     uint32_t recv_buf_len_ = 0;
@@ -435,6 +438,7 @@ public:
                  LgSwitch* auto_dry,
                  LgSelect* byte3_mode,
                  LgSelect* byte5_running_flag,
+                 LgSelect* judoka_emulation,
                  bool fahrenheit, bool is_slave_controller)
       : rx_pin_(*rx_pin),
         temperature_sensor_(temperature_sensor),
@@ -461,6 +465,7 @@ public:
         auto_dry_(*auto_dry),
         byte3_mode_(byte3_mode),
         byte5_running_flag_(byte5_running_flag),
+        judoka_emulation_(judoka_emulation),
         fahrenheit_(fahrenheit),
         slave_(is_slave_controller)
     {
@@ -546,6 +551,9 @@ public:
         }
         if (byte5_running_flag_ != nullptr && !byte5_running_flag_->has_state()) {
             byte5_running_flag_->publish_state(*byte5_running_flag_->at(0));
+        }
+        if (judoka_emulation_ != nullptr && !judoka_emulation_->has_state()) {
+            judoka_emulation_->publish_state(*judoka_emulation_->at(0));
         }
 
         sleep_timer_.publish_state(0);
@@ -1001,6 +1009,54 @@ private:
         pending_type_b_settings_change_ = false;
         pending_send_ = PendingSendKind::TypeB;
         last_sent_recv_type_b_millis_ = millis();
+    }
+
+    // Judoka emulation: 0 off, 1 type B request, 2 type 4, 3 type 6, 4 all three.
+    size_t judoka_emulation_mode() const {
+        if (judoka_emulation_ == nullptr) {
+            return 0;
+        }
+        auto idx = judoka_emulation_->active_index();
+        return idx.has_value() ? *idx : 0;
+    }
+
+    // Type 4 frame as the Judoka sends it as master, e.g. AC 80 07 00 00 00 1B 14 05 28 50 00:
+    // bytes 1-2 filter hours, 3-5 energy, 6 high setpoint (its maximum, 27), 7 setpoint integer,
+    // 8 setpoint fraction, 9 room temperature * 2, 10 deadband.
+    void send_emulated_type4_message() {
+        float target = this->target_temperature;
+        float t = roundf(target * 2.0f) / 2.0f;
+        float room = 20;
+        if (auto maybe_temp = get_room_temp()) {
+            room = *maybe_temp;
+        }
+        memset(send_buf_, 0, MsgLen);
+        send_buf_[0] = slave_ ? 0x2C : 0xAC;
+        send_buf_[1] = 0x80;
+        send_buf_[2] = 0x07;
+        send_buf_[6] = 0x1B;
+        send_buf_[7] = uint8_t(floorf(t));
+        send_buf_[8] = (fabsf(t - floorf(t) - 0.5f) < 0.01f) ? 0x05 : 0x00;
+        send_buf_[9] = uint8_t(room * 2);
+        send_buf_[10] = 0x50;
+        send_buf_[12] = calc_checksum(send_buf_);
+        ESP_LOGD(TAG, "sending emulated type 4 %s", format_hex_pretty(send_buf_, MsgLen).c_str());
+        UARTDevice::write_array(send_buf_, MsgLen);
+        pending_send_ = PendingSendKind::Status;
+        last_emul_type4_millis_ = millis();
+    }
+
+    // Type 6 frame as the Judoka sends it as master: AE 80 26 00 ... (byte 2 is humidity).
+    void send_emulated_type6_message() {
+        memset(send_buf_, 0, MsgLen);
+        send_buf_[0] = slave_ ? 0x2E : 0xAE;
+        send_buf_[1] = 0x80;
+        send_buf_[2] = 0x26;
+        send_buf_[12] = calc_checksum(send_buf_);
+        ESP_LOGD(TAG, "sending emulated type 6 %s", format_hex_pretty(send_buf_, MsgLen).c_str());
+        UARTDevice::write_array(send_buf_, MsgLen);
+        pending_send_ = PendingSendKind::Status;
+        last_emul_type6_millis_ = millis();
     }
 
     void process_message(const uint8_t* buffer, bool* had_error) {
@@ -1545,6 +1601,30 @@ private:
                 send_type_b_settings_message(/* timed = */ true);
             }
             return;
+        }
+        // Judoka emulation: the Faikin Judoka sends a type B request, a type 4 frame and a type 6
+        // frame every cycle. Reproduce each on a 30 second period so they can be blamed one at
+        // a time.
+        if (!slave_) {
+            size_t emul = judoka_emulation_mode();
+            if ((emul == 1 || emul == 4) && millis_now - last_sent_recv_type_b_millis_ > 30 * 1000) {
+                if (check_can_send()) {
+                    send_type_b_settings_message(/* timed = */ true);
+                }
+                return;
+            }
+            if ((emul == 2 || emul == 4) && millis_now - last_emul_type4_millis_ > 30 * 1000) {
+                if (check_can_send()) {
+                    send_emulated_type4_message();
+                }
+                return;
+            }
+            if ((emul == 3 || emul == 4) && millis_now - last_emul_type6_millis_ > 30 * 1000) {
+                if (check_can_send()) {
+                    send_emulated_type6_message();
+                }
+                return;
+            }
         }
         // Send a status message every 20 seconds.
         // Slave controllers only send a status message when settings are changed.
